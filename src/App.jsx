@@ -8,9 +8,18 @@ import store from './components/redux/store'
 import Dashboard from './components/home/Dashboard'
 import IncorrectPage from './components/auth/IncorrectPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
+import { useEffect } from 'react'
+import { scheduleTokenRefresh } from './components/uitility/authTokenManager'
 
 function App() {
+   useEffect(() => {
+    const accessToken = localStorage.getItem("accessToken");
+    const refreshToken = localStorage.getItem("refreshToken");
 
+    if (accessToken && refreshToken) {
+      scheduleTokenRefresh(); 
+    }
+  }, []);
   return (
     <Provider store={store}>
     <Routes>

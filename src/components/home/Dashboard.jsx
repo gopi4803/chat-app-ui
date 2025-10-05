@@ -1,9 +1,21 @@
-import React from 'react'
+import { useEffect } from "react";
+import api from "../uitility/api";
 
 const Dashboard = () => {
-  return (
-    <div>Dashboard</div>
-  )
-}
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const res = await api.get("/dashboard");
+        console.log("Dashboard data:", res.data);
+      } catch (err) {
+        console.error("Error fetching dashboard endpoint:", err);
+      }
+    };
 
-export default Dashboard
+    fetchData();
+  }, []);
+
+  return <div>Dashboard Page</div>;
+};
+
+export default Dashboard;

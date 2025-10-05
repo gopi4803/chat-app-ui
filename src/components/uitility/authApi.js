@@ -1,9 +1,5 @@
-import axios from "axios";
+import api from "./api";
 
-const API_URL="http://localhost:8080";
-export const signup=(signupData)=>{
-    return axios.post(`${API_URL}/sign-up`,signupData);
-}
-export const login=(loginData)=>{
-    return axios.post(`${API_URL}/log-in`,loginData);
-}
+export const login = (data) => api.post("/log-in", data);
+export const signup = (data) => api.post("/sign-up", data);
+export const refreshTokenCall = (data) => api.post("/refresh-token", data); 

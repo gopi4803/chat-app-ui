@@ -12,10 +12,11 @@ import {
   setPassword,
   togglePasswordVisibility,
   setToken,
-  clearAuthForm
+  clearAuthForm,
 } from "../redux/authSlice";
 import { login } from "../uitility/authApi";
 import { useEffect } from "react";
+import { scheduleTokenRefresh } from "../uitility/authTokenManager";
 
 const Login = () => {
   const dispatch = useDispatch();
@@ -29,32 +30,33 @@ const Login = () => {
     mode: "onTouched",
     resolver: yupResolver(loginValidationSchema),
   });
-  const { register, control, handleSubmit, formState,reset } = form;
+  const { register, control, handleSubmit, formState, reset } = form;
   const { errors, isValid } = formState;
   useEffect(() => {
     dispatch(clearAuthForm());
     reset();
-    }, [dispatch,reset]);
+  }, [dispatch, reset]);
   const onSubmit = async (data) => {
-    try{
-        const response=await login({
-            email:data.email,
-            password:data.password
-        });
-        const {token,user}=response.data;
-        if(token){
-            console.log("Token is ",token,"for user",user);
-            localStorage.setItem("token",token);
-            dispatch(setToken(token));
-            dispatch(setEmail(data.email));
-            dispatch(setPassword(data.password));
-            navigate("/dashboard");
-        }else{
-            throw new Error("Token not found");
-        }
-    }catch(err){
-        console.error("Login Failed",err.response?.data||err.message);
-        alert("Invalid credentials");
+    try {
+      const response = await login({
+        email: data.email,
+        password: data.password,
+      });
+      const { accessToken, refreshToken } = response.data;
+      if (accessToken && refreshToken) {
+        localStorage.setItem("accessToken", accessToken);
+        localStorage.setItem("refreshToken", refreshToken);
+        dispatch(setToken({ accessToken, refreshToken }));
+        dispatch(setEmail(data.email));
+        dispatch(setPassword(data.password));
+        scheduleTokenRefresh();
+        navigate("/dashboard");
+      } else {
+        throw new Error("Tokens not found in response");
+      }
+    } catch (err) {
+      console.error("Login failed:", err.response?.data || err.message);
+      alert(err.response?.data?.message || "Invalid credentials");
     }
   };
   return (
