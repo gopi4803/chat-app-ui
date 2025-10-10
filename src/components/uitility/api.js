@@ -30,11 +30,21 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // If 401 and this request hasn't been retried yet
+    // If request already failed once, don't retry
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
+
+      // **Don't retry /refresh-token endpoint**
+      if (originalRequest.url.includes("/refresh-token")) {
+        setAccessToken(null);
+        // Only redirect if NOT already on login page
+        if (window.location.pathname !== "/log-in" && window.location.pathname !== "/") {
+          window.location.href = "/log-in";
+        }
+        return Promise.reject(error);
+      }
+
       try {
-        // Use axios directly to avoid interceptors recursion
         const res = await axios.post(
           "http://localhost:8080/refresh-token",
           {},
@@ -43,21 +53,22 @@ api.interceptors.response.use(
 
         const { accessToken: newAccessToken } = res.data;
         if (!newAccessToken) throw new Error("No access token returned from refresh");
-
-        // Update in-memory token and retry original request
         setAccessToken(newAccessToken);
         originalRequest.headers["Authorization"] = `Bearer ${newAccessToken}`;
         return api(originalRequest);
       } catch (refreshError) {
         console.error("Refresh token failed:", refreshError);
-        // Clear in-memory token and redirect to login
         setAccessToken(null);
-        window.location.href = "/log-in";
+        if (window.location.pathname !== "/log-in" && window.location.pathname !== "/") {
+          window.location.href = "/log-in";
+        }
         return Promise.reject(refreshError);
       }
     }
+
     return Promise.reject(error);
   }
 );
+
 
 export default api;
