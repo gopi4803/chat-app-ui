@@ -5,8 +5,7 @@ const initialState = {
   email: "",
   password: "",
   confirmPassword: "",
-  token: null,        
-  refreshToken: null,
+  token: null,
   showPassword: {
     password: false,
     confirmPassword: false,
@@ -34,14 +33,15 @@ const authSlice = createSlice({
       state.showPassword[field] = !state.showPassword[field];
     },
     setToken: (state, action) => {
-      state.token = action.payload.accessToken;
-      state.refreshToken = action.payload.refreshToken;
+      state.token = action.payload;
     },
     logout: (state) => {
       state.token = null;
-      state.refreshToken = null;
-      localStorage.removeItem("accessToken"); 
-      localStorage.removeItem("refreshToken");
+      state.username = "";
+      state.email = "";
+      state.password = "";
+      state.confirmPassword = "";
+      state.showPassword = { password: false, confirmPassword: false };
     },
     clearAuthForm: (state) => {
       state.username = "";

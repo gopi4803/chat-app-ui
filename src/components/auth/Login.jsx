@@ -16,6 +16,7 @@ import {
 } from "../redux/authSlice";
 import { login } from "../uitility/authApi";
 import { useEffect } from "react";
+import { setAccessToken } from "../uitility/api";
 import { scheduleTokenRefresh } from "../uitility/authTokenManager";
 
 const Login = () => {
@@ -42,17 +43,21 @@ const Login = () => {
         email: data.email,
         password: data.password,
       });
-      const { accessToken, refreshToken } = response.data;
-      if (accessToken && refreshToken) {
-        localStorage.setItem("accessToken", accessToken);
-        localStorage.setItem("refreshToken", refreshToken);
-        dispatch(setToken({ accessToken, refreshToken }));
+
+      const { accessToken } = response.data;
+
+      if (accessToken) {
+        setAccessToken(accessToken);
+
+        dispatch(setToken(accessToken));
         dispatch(setEmail(data.email));
         dispatch(setPassword(data.password));
+
         scheduleTokenRefresh();
+
         navigate("/dashboard");
       } else {
-        throw new Error("Tokens not found in response");
+        throw new Error("Access token not found in response");
       }
     } catch (err) {
       console.error("Login failed:", err.response?.data || err.message);
