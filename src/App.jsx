@@ -10,6 +10,7 @@ import ForgotPassword from "./components/auth/ForgotPassword";
 import Dashboard from "./components/home/Dashboard";
 import IncorrectPage from "./components/auth/IncorrectPage";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import OAuth2RedirectHandler from "./components/uitility/OAuth2Handler";
 
 import { refreshTokenCall } from "./components/uitility/authApi";
 import { setAccessToken } from "./components/uitility/api";
@@ -26,7 +27,7 @@ function App() {
         if (accessToken) {
           setAccessToken(accessToken);
           scheduleTokenRefresh();
-          console.log("✅ Session restored successfully");
+          console.log("Session restored successfully");
         } else {
           console.log("No valid session found — user must log in.");
         }
@@ -58,6 +59,7 @@ function App() {
         <Route path="log-in" element={<Login />} />
         <Route path="sign-up" element={<SignUp />} />
         <Route path="forgot-password" element={<ForgotPassword />} />
+        <Route path="/oauth2/redirect" element={<OAuth2RedirectHandler />} />
         <Route
           path="dashboard"
           element={
