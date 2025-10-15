@@ -47,7 +47,22 @@ const SignUp = () => {
       setSubmitting(false);
     }
   };
+  const handleGoogleLogin = async () => {
+    try {
+      // Call backend to get Google OAuth URL
+      const res = await fetch("http://localhost:8080/api/auth/google/login");
+      if (!res.ok) throw new Error("Failed to get Google OAuth URL");
 
+      // Get the URL from response (plain text)
+      const googleAuthUrl = await res.text();
+
+      // Redirect user to Google login page
+      window.location.href = googleAuthUrl;
+    } catch (err) {
+      console.error("Failed to initiate Google OAuth", err);
+      alert("Unable to sign in with Google. Please try again.");
+    }
+  };
   return (
     <div className="flex h-screen">
       <div className="flex-1 flex flex-col items-center justify-center bg-white">
@@ -207,6 +222,7 @@ const SignUp = () => {
                   <div className="w-full">
                     <button
                       type="button"
+                      onClick={handleGoogleLogin}
                       className="flex items-center justify-center bg-gray-300 text-gray-900 rounded-full px-6 py-3 w-full font-semibold shadow-md mt-6 space-x-3 cursor-pointer"
                     >
                       <img src={google} alt="Google Logo" className="w-5 h-5" />
