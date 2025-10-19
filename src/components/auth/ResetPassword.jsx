@@ -1,40 +1,56 @@
-import { useSelector } from "react-redux";
-import { Link } from "react-router-dom";
+import React, { useState } from "react";
 import { useForm } from "react-hook-form";
+import { useSearchParams, Link } from "react-router-dom";
 import { yupResolver } from "@hookform/resolvers/yup";
-import { forgotPasswordValidationSchema } from "../schema/validationSchema";
-import { useState } from "react";
+import { resetPassword as resetPasswordApi } from "../uitility/authApi";
 import EmailSentImage from "../../assets/EmailSent.jpg";
-import { forgotPassword as forgotPasswordApi } from "../uitility/authApi";
+import { resetPasswordValidationSchema } from "../schema/validationSchema";
 
-const ForgotPassword = () => {
+
+const ResetPassword = () => {
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get("token");
+
   const form = useForm({
     defaultValues: {
-      email: "",
+      newPassword: "",
+      confirmPassword: "",
     },
     mode: "onTouched",
-    resolver: yupResolver(forgotPasswordValidationSchema),
+    resolver: yupResolver(resetPasswordValidationSchema),
   });
+
   const { register, handleSubmit, formState } = form;
   const { errors } = formState;
-  const { email } = useSelector((state) => state.auth);
+
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [serverMessage, setServerMessage] = useState(null);
   const [serverError, setServerError] = useState(null);
 
   const onSubmit = async (data) => {
+    if (!token) {
+      setServerError("Reset token is missing.");
+      return;
+    }
+
     setLoading(true);
-    setServerError(null);
     setServerMessage(null);
+    setServerError(null);
+
     try {
-      const res = await forgotPasswordApi({ email: data.email });
-      setServerMessage(res.data?.message || "If that email exists, you will receive instructions.");
+      const res = await resetPasswordApi({
+        token,
+        newPassword: data.newPassword,
+      });
+
+      setServerMessage(
+        res.data?.message || "Password reset successful. Please log in."
+      );
       setSubmitted(true);
     } catch (err) {
       setServerError(
-        err?.response?.data?.message ||
-          "Something went wrong. Please try again later."
+        err?.response?.data?.message || "Unable to reset password. Try again."
       );
     } finally {
       setLoading(false);
@@ -43,6 +59,7 @@ const ForgotPassword = () => {
 
   return (
     <div className="flex h-screen">
+      {/* Left Branding Section */}
       <div className="flex-1 flex flex-col items-center justify-center bg-white">
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -53,25 +70,21 @@ const ForgotPassword = () => {
           <path d="M12 2C6.48 2 2 6.02 2 10.5C2 13.11 3.53 15.42 6 16.93V22L10.38 19.47C10.9 19.49 11.44 19.5 12 19.5C17.52 19.5 22 15.98 22 11.5C22 7.02 17.52 2 12 2Z" />
         </svg>
         <div className="font-bold text-xl text-black">Chat-App</div>
-        <div className="font-bold text-black">Welcome back!</div>
-        <div className="font-bold text-black">Please login to your account</div>
+        <div className="font-bold text-black">Reset Your Password</div>
+        <div className="font-bold text-black">Choose a new one</div>
       </div>
+
+      {/* Right Form Section */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-2 bg-gray-900">
         {submitted ? (
           <div className="text-center">
             <img
               src={EmailSentImage}
-              alt="Email Sent"
+              alt="Password Reset"
               className="w-48 mx-auto"
             />
-            <h2 className="text-white font-bold mt-4">Check Your Email!</h2>
-            <p className="text-gray-400 font-bold mt-4">
-              {serverMessage ||
-                "We have sent you temporary credentials. Please check your inbox."}
-            </p>
-            {serverError && (
-              <p className="text-red-400 font-bold mt-2">{serverError}</p>
-            )}
+            <h2 className="text-white font-bold mt-4">Password Reset</h2>
+            <p className="text-gray-400 font-bold mt-4">{serverMessage}</p>
             <p className="text-gray-400 font-bold mt-4">
               Back to
               <Link
@@ -86,31 +99,50 @@ const ForgotPassword = () => {
           <div>
             <form onSubmit={handleSubmit(onSubmit)}>
               <div className="w-full flex flex-col space-y-4 gap-4">
-                <h2 className="font-bold text-gray-300">FORGOT PASSWORD</h2>
+                <h2 className="font-bold text-gray-300">RESET PASSWORD</h2>
 
-                {/* Email Field */}
+                {/* New Password Field */}
                 <div className="flex flex-col relative w-full">
                   <label
-                    htmlFor="email"
+                    htmlFor="newPassword"
                     className="font-bold absolute text-gray-300 left-2 -top-6"
                   >
-                    Email:
+                    New Password:
                   </label>
                   <input
-                    type="email"
-                    id="email"
-                    placeholder="Enter Email"
-                    defaultValue={email}
-                    {...register("email")}
+                    type="password"
+                    id="newPassword"
+                    placeholder="Enter new password"
+                    {...register("newPassword")}
                     className="bg-gray-300 text-gray-900 rounded-lg placeholder-gray-900 text-center py-2 w-full"
                   />
                   <p className="text-red-500 text-sm mt-1 absolute left-1/2 -translate-x-1/2 -bottom-5 text-center w-full min-h-[20px] whitespace-nowrap overflow-hidden text-ellipsis">
-                    {errors.email?.message}
+                    {errors.newPassword?.message}
+                  </p>
+                </div>
+
+                {/* Confirm Password Field */}
+                <div className="flex flex-col relative w-full">
+                  <label
+                    htmlFor="confirmPassword"
+                    className="font-bold absolute text-gray-300 left-2 -top-6"
+                  >
+                    Confirm Password:
+                  </label>
+                  <input
+                    type="password"
+                    id="confirmPassword"
+                    placeholder="Confirm new password"
+                    {...register("confirmPassword")}
+                    className="bg-gray-300 text-gray-900 rounded-lg placeholder-gray-900 text-center py-2 w-full"
+                  />
+                  <p className="text-red-500 text-sm mt-1 absolute left-1/2 -translate-x-1/2 -bottom-5 text-center w-full min-h-[20px] whitespace-nowrap overflow-hidden text-ellipsis">
+                    {errors.confirmPassword?.message}
                   </p>
                 </div>
               </div>
 
-              {/* Reset Password Button */}
+              {/* Submit Button & Link */}
               <div className="flex flex-col items-center">
                 <p className="text-gray-400 font-bold mt-4">
                   Remembered Password?
@@ -118,7 +150,7 @@ const ForgotPassword = () => {
                     to="/log-in"
                     className="font-bold text-gray-300 ml-1 cursor-pointer hover:scale-110 transition-all duration-200 inline-block"
                   >
-                    Goto Login!
+                    Login!
                   </Link>
                 </p>
                 <button
@@ -128,13 +160,14 @@ const ForgotPassword = () => {
                     loading ? "opacity-60 pointer-events-none" : ""
                   }`}
                 >
-                  <span>{loading ? "Sending..." : "Reset Password"}</span>
+                  <span>{loading ? "Resetting..." : "Reset Password"}</span>
                 </button>
               </div>
+
+              {serverError && (
+                <p className="text-red-400 text-center mt-4">{serverError}</p>
+              )}
             </form>
-            {serverError && (
-              <p className="text-red-400 text-center mt-4">{serverError}</p>
-            )}
           </div>
         )}
       </div>
@@ -142,4 +175,4 @@ const ForgotPassword = () => {
   );
 };
 
-export default ForgotPassword;
+export default ResetPassword;
