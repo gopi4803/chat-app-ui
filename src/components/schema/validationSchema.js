@@ -44,3 +44,14 @@ export const forgotPasswordValidationSchema = Yup.object({
     .email("Invalid email format")
     .required("Email is required"),
 });
+
+export const resetPasswordValidationSchema=Yup.object({
+  newPassword: Yup
+      .string()
+      .required("Password is required")
+      .min(8, "Minimum 8 characters"),
+    confirmPassword: Yup
+      .string()
+      .oneOf([Yup.ref("newPassword"), null], "Passwords must match")
+      .required("Please confirm your password"),
+})

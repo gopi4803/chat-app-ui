@@ -15,6 +15,7 @@ import OAuth2RedirectHandler from "./components/uitility/OAuth2Handler";
 import { refreshTokenCall } from "./components/uitility/authApi";
 import { setAccessToken } from "./components/uitility/api";
 import { scheduleTokenRefresh } from "./components/uitility/authTokenManager";
+import ResetPassword from "./components/auth/ResetPassword";
 
 function App() {
   const [loading, setLoading] = useState(true);
@@ -60,6 +61,7 @@ function App() {
         <Route path="sign-up" element={<SignUp />} />
         <Route path="forgot-password" element={<ForgotPassword />} />
         <Route path="/oauth2/redirect" element={<OAuth2RedirectHandler />} />
+        <Route path="reset-password" element={<ResetPassword />} />
         <Route
           path="dashboard"
           element={
