@@ -13,6 +13,7 @@
     "@hookform/devtools": "^4.4.0",
     "@hookform/resolvers": "^5.2.2",
     "@reduxjs/toolkit": "^2.9.0",
+    "@stomp/stompjs": "^7.2.1",
     "@tailwindcss/vite": "^4.1.13",
     "axios": "^1.12.2",
     "formik": "^2.4.6",
@@ -24,6 +25,7 @@
     "react-hook-form": "^7.63.0",
     "react-redux": "^9.2.0",
     "react-router-dom": "^7.9.3",
+    "sockjs-client": "^1.6.1",
     "tailwindcss": "^4.1.13",
     "yup": "^1.7.1"
   },
