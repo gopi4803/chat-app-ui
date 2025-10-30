@@ -181,27 +181,6 @@ const Login = () => {
               <div className="w-full">
                 <button
                   type="button"
-                  // onClick={async () => {
-                  //       try {
-                  //         // 1️⃣ Call backend to get Google OAuth URL
-                  //         const res = await fetch(
-                  //           "http://localhost:8080/api/auth/google/login"
-                  //         );
-                  //         if (!res.ok)
-                  //           throw new Error("Failed to get Google OAuth URL");
-
-                  //         // 2️⃣ Get the URL from response (plain text)
-                  //         const googleAuthUrl = await res.text();
-
-                  //         // 3️⃣ Redirect user to Google login page
-                  //         window.location.href = googleAuthUrl;
-                  //       } catch (err) {
-                  //         console.error("Failed to initiate Google OAuth", err);
-                  //         alert(
-                  //           "Unable to sign in with Google. Please try again."
-                  //         );
-                  //       }
-                  //     }}
                   onClick={handleGoogleLogin}
                   className="flex items-center justify-center bg-gray-300 text-gray-900 rounded-full px-6 py-3 w-full font-semibold shadow-md mt-6 space-x-3 cursor-pointer"
                 >

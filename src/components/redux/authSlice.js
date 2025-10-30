@@ -1,4 +1,5 @@
 import { createSlice } from "@reduxjs/toolkit";
+import { jwtDecode } from "jwt-decode";
 
 const initialState = {
   username: "",
@@ -21,6 +22,14 @@ const authSlice = createSlice({
     },
     setEmail: (state, action) => {
       state.email = action.payload;
+    },
+    setEmailFromToken: (state, action) => {
+      try {
+        const decoded = jwtDecode(action.payload);
+        if (decoded?.sub) state.email = decoded.sub;
+      } catch (e) {
+        console.error("Failed to decode token in setEmailFromToken:", e);
+      }
     },
     setPassword: (state, action) => {
       state.password = action.payload;
@@ -59,6 +68,7 @@ const authSlice = createSlice({
 export const {
   setUserName,
   setEmail,
+  setEmailFromToken,
   setPassword,
   setConfirmPassword,
   togglePasswordVisibility,

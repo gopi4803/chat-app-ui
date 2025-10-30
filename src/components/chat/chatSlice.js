@@ -5,14 +5,15 @@ const initialState = {
   messages: {},
   activeConversationId: null,
   me: null,
+  lastSyncedAt: 0,
 };
 
 function isSameMsg(a, b) {
   if (!a || !b) return false;
-  // compare content + from + near-equal timestamp (within 1000ms) to avoid duplicates
   return (
     a.content === b.content &&
     a.from === b.from &&
+    a.to === b.to &&
     Math.abs((a.timestamp || 0) - (b.timestamp || 0)) <= 1000
   );
 }
@@ -29,12 +30,11 @@ const chatSlice = createSlice({
     },
     addOrUpdateConversation: (state, action) => {
       const conv = action.payload;
-      // Guarantee id is an email string (normalization)
       const id = conv.id;
       const idx = state.conversations.findIndex((c) => c.id === id);
-      const toInsert = { ...conv, id };
-      if (idx >= 0) state.conversations[idx] = { ...state.conversations[idx], ...toInsert };
-      else state.conversations.unshift(toInsert);
+      if (idx >= 0)
+        state.conversations[idx] = { ...state.conversations[idx], ...conv };
+      else state.conversations.unshift(conv);
     },
     setActiveConversation: (state, action) => {
       state.activeConversationId = action.payload;
@@ -42,24 +42,20 @@ const chatSlice = createSlice({
     addMessage: (state, action) => {
       const { convId, message } = action.payload;
       if (!convId) return;
-
       if (!state.messages[convId]) state.messages[convId] = [];
 
-      // Deduplicate: avoid inserting if an equal message is already present
-      const existing = state.messages[convId].find((m) => isSameMsg(m, message));
-      if (existing) {
-        // console.debug("Duplicate message skipped", message);
-      } else {
-        state.messages[convId].push(message);
-      }
+      const exists = state.messages[convId].some((m) => isSameMsg(m, message));
+      if (!exists) state.messages[convId].push(message);
 
-      // update conversation's lastMessage & lastAt
       const convIdx = state.conversations.findIndex((c) => c.id === convId);
       if (convIdx >= 0) {
-        state.conversations[convIdx].lastMessage = message.content;
-        state.conversations[convIdx].lastAt = message.timestamp || Date.now();
+        const prev = state.conversations[convIdx].lastAt || 0;
+        if ((message.timestamp || 0) >= prev) {
+          state.conversations[convIdx].lastMessage = message.content;
+          state.conversations[convIdx].lastAt =
+            message.timestamp || Date.now();
+        }
       } else {
-        // If conversation not present, create a minimal one so UI shows correctly
         state.conversations.unshift({
           id: convId,
           name: convId,
@@ -69,10 +65,15 @@ const chatSlice = createSlice({
         });
       }
     },
+    setLastSyncedAt: (state, action) => {
+      state.lastSyncedAt = action.payload;
+    },
     clearChatState: (state) => {
       state.conversations = [];
       state.messages = {};
       state.activeConversationId = null;
+      state.me = null;
+      state.lastSyncedAt = 0;
     },
   },
 });
@@ -83,6 +84,7 @@ export const {
   addOrUpdateConversation,
   setActiveConversation,
   addMessage,
+  setLastSyncedAt,
   clearChatState,
 } = chatSlice.actions;
 

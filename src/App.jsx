@@ -1,9 +1,11 @@
+// src/App.jsx
 import "./App.css";
 import { Route, Routes } from "react-router-dom";
-import { Provider } from "react-redux";
+import { Provider, useDispatch } from "react-redux";
+import { PersistGate } from "redux-persist/integration/react";
 import { useEffect, useState } from "react";
 
-import store from "./components/redux/store";
+import store, { persistor } from "./components/redux/store";
 import Login from "./components/auth/Login";
 import SignUp from "./components/auth/SignUp";
 import ForgotPassword from "./components/auth/ForgotPassword";
@@ -17,7 +19,12 @@ import { setAccessToken } from "./components/uitility/api";
 import { scheduleTokenRefresh } from "./components/uitility/authTokenManager";
 import ResetPassword from "./components/auth/ResetPassword";
 
-function App() {
+// auth actions
+import { setToken, setEmailFromToken } from "./components/redux/authSlice";
+
+// NOTE: small wrapper component to use dispatch inside top-level effect
+function AppLoader({ children }) {
+  const dispatch = useDispatch();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,7 +33,14 @@ function App() {
         const res = await refreshTokenCall();
         const { accessToken } = res.data;
         if (accessToken) {
+          // put token into in-memory axios instance
           setAccessToken(accessToken);
+
+          // IMPORTANT: also persist into redux auth slice so Dashboard sees token/email
+          dispatch(setToken(accessToken));
+          dispatch(setEmailFromToken(accessToken));
+
+          // schedule refresh loop
           scheduleTokenRefresh();
           console.log("Session restored successfully");
         } else {
@@ -44,7 +58,7 @@ function App() {
     };
 
     restoreSession();
-  }, []);
+  }, [dispatch]);
 
   if (loading)
     return (
@@ -53,25 +67,33 @@ function App() {
       </div>
     );
 
+  return children;
+}
+
+function App() {
   return (
     <Provider store={store}>
-      <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="log-in" element={<Login />} />
-        <Route path="sign-up" element={<SignUp />} />
-        <Route path="forgot-password" element={<ForgotPassword />} />
-        <Route path="/oauth2/redirect" element={<OAuth2RedirectHandler />} />
-        <Route path="reset-password" element={<ResetPassword />} />
-        <Route
-          path="dashboard"
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<IncorrectPage />} />
-      </Routes>
+      <PersistGate loading={null} persistor={persistor}>
+        <AppLoader>
+          <Routes>
+            <Route path="/" element={<Login />} />
+            <Route path="log-in" element={<Login />} />
+            <Route path="sign-up" element={<SignUp />} />
+            <Route path="forgot-password" element={<ForgotPassword />} />
+            <Route path="/oauth2/redirect" element={<OAuth2RedirectHandler />} />
+            <Route path="reset-password" element={<ResetPassword />} />
+            <Route
+              path="dashboard"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<IncorrectPage />} />
+          </Routes>
+        </AppLoader>
+      </PersistGate>
     </Provider>
   );
 }
