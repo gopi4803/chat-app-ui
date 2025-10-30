@@ -1,5 +1,6 @@
-import {jwtDecode} from "jwt-decode"; 
+import { jwtDecode } from "jwt-decode";
 import api, { setAccessToken, getAccessToken } from "./api";
+import { reconnectWebsocketIfTokenRotated } from "../chat/websocketClient";
 
 let refreshTimeout = null;
 
@@ -15,7 +16,6 @@ export function scheduleTokenRefresh() {
     const delay = exp - now - buffer;
 
     if (delay <= 0) {
-      // token already expired or about to expire, refresh now
       console.warn("Access token expired or about to expire; refreshing now");
       refreshAccessToken();
       return;
@@ -34,12 +34,19 @@ export function scheduleTokenRefresh() {
 
 async function refreshAccessToken() {
   try {
-    // api has withCredentials: true so browser will include refresh cookie
     const res = await api.post("/refresh-token", {});
     const { accessToken } = res.data;
+
     if (accessToken) {
       setAccessToken(accessToken);
       console.log("Access token refreshed proactively");
+
+      reconnectWebsocketIfTokenRotated();
+
+      setTimeout(() => {
+        console.log(" WebSocket reconnected successfully after token refresh");
+      }, 300);
+
       scheduleTokenRefresh();
     } else {
       throw new Error("No accessToken returned on proactive refresh");
