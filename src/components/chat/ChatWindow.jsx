@@ -1,4 +1,4 @@
-import  { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { publish } from "./websocketClient";
 
 const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping }) => {
@@ -7,20 +7,33 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping }) => {
   const typingTimeout = useRef(null);
 
   useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+    if (listRef.current)
+      listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, conversation?.id]);
 
   // Send read receipt when user opens the conversation
   useEffect(() => {
-    if (!conversation || !me || messages.length === 0) return;
+    if (!conversation || !me) return;
+    const convId = conversation.id;
+    const myEmail = me.toLowerCase();
+
+    // check if there are unread messages from the other user
+    const unread = messages.some(
+      (m) => m.from && m.from !== myEmail && !m.readAt
+    );
+    if (!unread) return;
 
     const payload = {
       type: "READ_RECEIPT",
-      from: conversation.id,
+      from: convId,
       readAt: Date.now(),
     };
-    publish("/app/chat.read", payload);
-  }, [conversation?.id, me /* eslint-disable-line react-hooks/exhaustive-deps */]);
+
+    const ok = publish("/app/chat.read", payload);
+    if (!ok) {
+      console.warn("Failed to publish read receipt for", convId);
+    }
+  }, [conversation?.id, me, messages /* eslint-disable-line react-hooks/exhaustive-deps */]);
 
   // Debounced typing event
   const handleTyping = () => {
@@ -103,7 +116,8 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping }) => {
           const StatusIcon = () => {
             if (!mine) return null;
             if (read) return <span className="ml-2 text-blue-400">✓✓</span>;
-            if (delivered) return <span className="ml-2 text-gray-400">✓✓</span>;
+            if (delivered)
+              return <span className="ml-2 text-gray-400">✓✓</span>;
             return <span className="ml-2 animate-pulse">…</span>;
           };
 

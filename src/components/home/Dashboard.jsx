@@ -233,15 +233,27 @@ const Dashboard = () => {
   // presence map in stateful ref
   const updatePresence = (payload) => {
     if (!payload) return;
+
+    const current = { ...presenceRef.current };
+
     if (Array.isArray(payload)) {
-      payload.forEach(
-        (p) => (presenceRef.current[p.email.toLowerCase()] = !!p.online)
-      );
+      //  Full snapshot replace with new clean map
+      const snapshotMap = {};
+      payload.forEach((p) => {
+        if (p.email) snapshotMap[p.email.toLowerCase()] = !!p.online;
+      });
+      presenceRef.current = snapshotMap;
+      console.log("Full presence snapshot received:", snapshotMap);
     } else if (payload.email) {
-      presenceRef.current[payload.email.toLowerCase()] = !!payload.online;
+      //  Incremental update update single user's presence
+      current[payload.email.toLowerCase()] = !!payload.online;
+      presenceRef.current = current;
+      console.log("Presence update received:", payload);
     }
-    // force re-render by calling setAllUsers to reuse re-render
+
+    // trigger re-render to update UI
     setAllUsers((prev) => [...prev]);
+    console.log("Current presenceRef:", presenceRef.current);
   };
 
   useEffect(() => {
@@ -252,9 +264,19 @@ const Dashboard = () => {
       onConnect: () => {
         console.log(" WebSocket connected");
         flushPending();
-        const storedSince = Number(localStorage.getItem("lastSyncedAt") || 0);
-        syncMessages(storedSince);
+
+        setTimeout(async () => {
+          try {
+            const res = await api.get("/presence");
+            const payload = res.data.map((email) => ({ email, online: true }));
+            updatePresence(payload);
+            console.log(" REST presence snapshot applied:", payload);
+          } catch (e) {
+            console.warn("Presence REST fetch failed", e);
+          }
+        }, 700); // allow backend to populate sessions
       },
+
       onMessagePrivate: (payload) => {
         const msg = {
           type: payload.type,
@@ -295,6 +317,10 @@ const Dashboard = () => {
         }
       },
       onPresence: updatePresence,
+      onPresenceSnapshot: (payload) => {
+        // payload is an array of { email, online }
+        updatePresence(payload);
+      },
       onTyping: (payload) => {
         const from = payload.from?.toLowerCase();
         if (!from || from === meEmail.toLowerCase()) return;
