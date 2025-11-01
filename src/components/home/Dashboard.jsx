@@ -233,27 +233,41 @@ const Dashboard = () => {
   // presence map in stateful ref
   const updatePresence = (payload) => {
     if (!payload) return;
-
     const current = { ...presenceRef.current };
-
     if (Array.isArray(payload)) {
-      //  Full snapshot replace with new clean map
+      // handle both array of strings and array of objects safely
       const snapshotMap = {};
       payload.forEach((p) => {
-        if (p.email) snapshotMap[p.email.toLowerCase()] = !!p.online;
+        if (!p) return;
+        // Case 1: p is a string
+        if (typeof p === "string") {
+          snapshotMap[p.toLowerCase()] = { online: true, lastSeen: null };
+        }
+        // Case 2: p is an object (from backend PresencePayload or REST snapshot)
+        else if (typeof p === "object") {
+          const email = p.email || p.user || p.id; // flexible
+          if (!email) return;
+          snapshotMap[email.toLowerCase()] = {
+            online: !!p.online,
+            lastSeen: p.lastSeen ?? null,
+          };
+        }
       });
+
       presenceRef.current = snapshotMap;
-      console.log("Full presence snapshot received:", snapshotMap);
-    } else if (payload.email) {
-      //  Incremental update update single user's presence
-      current[payload.email.toLowerCase()] = !!payload.online;
+      console.log(" Full presence snapshot:", snapshotMap);
+    } else if (payload.email || payload.user) {
+      // single incremental update (from WebSocket /topic/presence)
+      const email = (payload.email || payload.user || "").toLowerCase();
+      if (!email) return;
+      current[email] = {
+        online: !!payload.online,
+        lastSeen: payload.lastSeen ?? current[email]?.lastSeen ?? null,
+      };
       presenceRef.current = current;
       console.log("Presence update received:", payload);
     }
-
-    // trigger re-render to update UI
     setAllUsers((prev) => [...prev]);
-    console.log("Current presenceRef:", presenceRef.current);
   };
 
   useEffect(() => {
@@ -509,6 +523,7 @@ const Dashboard = () => {
           messages={convMessages}
           onSend={handleSendMessage}
           isTyping={typingMap[activeConversation?.id]}
+          presenceRef={presenceRef}
         />
       </div>
     </div>

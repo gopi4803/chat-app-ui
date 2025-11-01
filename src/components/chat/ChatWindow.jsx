@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { publish } from "./websocketClient";
 
-const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping }) => {
+const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenceRef }) => {
   const [text, setText] = useState("");
   const listRef = useRef();
   const typingTimeout = useRef(null);
@@ -93,7 +93,21 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping }) => {
         </div>
         <div>
           <div className="text-lg font-bold">{conversation.name}</div>
-          <div className="text-sm text-gray-500">{conversation.id}</div>
+          <div className="text-sm text-gray-500">
+            {(() => {
+              const userPresence = presenceRef?.current?.[conversation.id];
+              if (!userPresence) return "";
+              if (userPresence.online) return "Online";
+              if (userPresence.lastSeen) {
+                const last = new Date(userPresence.lastSeen);
+                return `Last seen at ${last.toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}`;
+              }
+              return "";
+            })()}
+          </div>
         </div>
       </div>
 
