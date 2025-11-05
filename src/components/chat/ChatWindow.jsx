@@ -1,23 +1,35 @@
 import { useState, useRef, useEffect } from "react";
 import { publish } from "./websocketClient";
 
-const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenceRef }) => {
+const ChatWindow = ({
+  conversation,
+  me,
+  messages = [],
+  onSend,
+  isTyping,
+  presenceRef,
+}) => {
   const [text, setText] = useState("");
   const listRef = useRef();
   const typingTimeout = useRef(null);
+
+  // Always treat conversation.id as string safely
+  const convIdStr =
+    conversation && conversation.id !== undefined
+      ? String(conversation.id)
+      : null;
 
   useEffect(() => {
     if (listRef.current)
       listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, conversation?.id]);
 
-  // Send read receipt when user opens the conversation
+  // Send read receipt when user opens a private chat (skip for groups)
   useEffect(() => {
-    if (!conversation || !me) return;
-    const convId = conversation.id;
+    if (!conversation || !me || conversation.isGroup) return;
+    const convId = convIdStr;
     const myEmail = me.toLowerCase();
 
-    // check if there are unread messages from the other user
     const unread = messages.some(
       (m) => m.from && m.from !== myEmail && !m.readAt
     );
@@ -33,22 +45,31 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenc
     if (!ok) {
       console.warn("Failed to publish read receipt for", convId);
     }
-  }, [conversation?.id, me, messages /* eslint-disable-line react-hooks/exhaustive-deps */]);
+  }, [conversation?.id, me, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced typing event
   const handleTyping = () => {
     if (!conversation?.id || !me) return;
 
-    publish("/app/chat.typing", {
-      type: "TYPING",
-      from: me.toLowerCase(),
-      to: conversation.id.toLowerCase(),
-    });
-
     clearTimeout(typingTimeout.current);
     typingTimeout.current = setTimeout(() => {}, 1500);
+
+    // If it's a group, publish group typing event
+    if (conversation.isGroup) {
+      publish("/app/group.typing", {
+        groupId: Number(convIdStr),
+      });
+    } else {
+      // Private chat typing event
+      publish("/app/chat.typing", {
+        type: "TYPING",
+        from: me.toLowerCase(),
+        to: convIdStr.toLowerCase(),
+      });
+    }
   };
 
+  // Send handler (supports private + group)
   const handleSend = () => {
     if (!text.trim() || !conversation?.id) return;
 
@@ -57,7 +78,13 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenc
         ? crypto.randomUUID()
         : "msg-" + Math.random().toString(36).slice(2, 9) + "-" + Date.now();
 
-    onSend(conversation.id, text.trim(), messageId);
+    // Group or private message sending
+    if (conversation.isGroup) {
+      onSend(Number(convIdStr), text.trim(), messageId);
+    } else {
+      onSend(convIdStr, text.trim(), messageId);
+    }
+
     setText("");
   };
 
@@ -95,6 +122,8 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenc
           <div className="text-lg font-bold">{conversation.name}</div>
           <div className="text-sm text-gray-500">
             {(() => {
+              if (conversation.isGroup)
+                return `${conversation.members?.length || 0} members`;
               const userPresence = presenceRef?.current?.[conversation.id];
               if (!userPresence) return "";
               if (userPresence.online) return "Online";
@@ -117,7 +146,23 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenc
         className="flex-1 overflow-y-auto space-y-4 pb-6 bg-gray-900"
       >
         {messages.map((m, i) => {
-          const mine = m.from === meEmail;
+          // System or group activity messages (like "X created the group")
+          if (m.type === "GROUP_SYSTEM" || m.type === "SYSTEM") {
+            return (
+              <div
+                key={`${
+                  m.messageId || `sys-${i}-${m.timestamp}-${m.content.length}`
+                }`}
+                className="flex justify-center"
+              >
+                <div className="text-gray-400 italic text-sm text-center bg-gray-800 px-3 py-1 rounded-full">
+                  {m.content}
+                </div>
+              </div>
+            );
+          }
+
+          const mine = m.from === meEmail || m.sender === meEmail;
           const read = !!m.readAt;
           const delivered = !!m.delivered || !!m.readAt;
           const timeText = m.timestamp
@@ -137,7 +182,12 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenc
 
           return (
             <div
-              key={m.messageId || i + "-" + (m.timestamp || 0)}
+              key={`${
+                m.messageId ||
+                `sys-${i}-${m.timestamp || Date.now()}-${Math.random()
+                  .toString(36)
+                  .slice(2, 5)}`
+              }`}
               className={`flex ${mine ? "justify-end" : ""}`}
             >
               <div
@@ -147,6 +197,15 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenc
                     : "bg-white text-gray-800 shadow-sm"
                 }`}
               >
+                {conversation.isGroup && !mine && (
+                  <div className="text-xs font-semibold text-gray-500 mb-1">
+                    {m.senderName?.trim() ||
+                      m.displayName ||
+                      m.fromName ||
+                      m.sender ||
+                      m.from}
+                  </div>
+                )}
                 <div className="text-sm whitespace-pre-wrap">{m.content}</div>
                 <div className="text-xs mt-1 flex items-center justify-end gap-2">
                   <div className="text-gray-500">{timeText}</div>
@@ -158,7 +217,7 @@ const ChatWindow = ({ conversation, me, messages = [], onSend, isTyping, presenc
         })}
       </div>
 
-      {/* Typing indicator  */}
+      {/* Typing indicator */}
       {isTyping && (
         <div className="flex items-center mb-2 ml-1">
           <div className="flex space-x-1 bg-gray-800 rounded-full px-3 py-1">

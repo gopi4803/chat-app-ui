@@ -54,7 +54,7 @@ export function connectWebsocket(accessToken, handlers = {}) {
       client.subscribe("/topic/presence", (msg) => safeHandle(msg, handlers.onPresence));
       client.subscribe("/user/queue/presence", (msg) => safeHandle(msg, handlers.onPresenceSnapshot));
       client.subscribe("/user/queue/typing", (msg) => safeHandle(msg, handlers.onTyping));
-
+      client.subscribe("/user/queue/group.events", (msg) => safeHandle(msg, handlers.onGroupEvent));
 
       handlers.onConnect && handlers.onConnect(frame);
     },
@@ -106,7 +106,7 @@ export function reconnectWebsocketIfTokenRotated() {
   const token = getAccessToken();
   if (!token) return;
   if (token !== currentToken) {
-    console.info("🔄 Token rotated, reconnecting WebSocket with new token...");
+    console.info(" Token rotated, reconnecting WebSocket with new token...");
     disconnectWebsocket();
     connectWebsocket(token, handlersRef);
   }
@@ -142,6 +142,72 @@ export function publish(destination, payload) {
     return true;
   } catch (e) {
     console.error("Failed to publish STOMP message to", destination, e);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to a group topic and group-typing topic.
+ * callback receives parsed payload for messages
+ */
+export function subscribeToGroup(groupId, handlers = {}) {
+  if (!client || !connected) {
+    console.warn("STOMP not connected - cannot subscribe to group", groupId);
+    return;
+  }
+  try {
+    const topic = `/topic/group.${groupId}`;
+    const typingTopic = `/topic/group.${groupId}.typing`;
+
+    client.subscribe(topic, (msg) => safeHandle(msg, handlers.onMessage));
+    client.subscribe(typingTopic, (msg) => safeHandle(msg, handlers.onTyping));
+
+    console.info("Subscribed to group", groupId);
+    return true;
+  } catch (e) {
+    console.error("Failed to subscribe to group topic", e);
+    return false;
+  }
+}
+
+
+export function unsubscribeFromGroup(groupId) {
+  // STOMP.js stores subscriptions internally; since we didn't keep subscription references,
+  // re-creating a reconnect will clear them. For now, no-op but left for future improvements.
+  console.info("unsubscribeFromGroup called for", groupId, "(noop)");
+  return true;
+}
+
+export function sendGroupMessage(payload) {
+  // payload should include: { groupId, content, messageId, type }
+  if (!client || !connected) {
+    console.warn("STOMP not connected - cannot send group message", payload);
+    return false;
+  }
+  try {
+    client.publish({
+      destination: "/app/group.send",
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch (e) {
+    console.error("Failed to publish group message", e);
+    return false;
+  }
+}
+
+export function publishGroupTyping(groupId) {
+  if (!client || !connected) {
+    return false;
+  }
+  try {
+    client.publish({
+      destination: "/app/group.typing",
+      body: JSON.stringify({ groupId }),
+    });
+    return true;
+  } catch (e) {
+    console.error("Failed to publish group typing", e);
     return false;
   }
 }

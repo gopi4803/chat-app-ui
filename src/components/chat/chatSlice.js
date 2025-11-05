@@ -3,7 +3,10 @@ import { createSlice } from "@reduxjs/toolkit";
 const initialState = {
   conversations: [],
   messages: {},
+  groupConversations: [],
+  groupMessages: {},
   activeConversationId: null,
+  activeGroupId: null,
   me: null,
   lastSyncedAt: 0,
 };
@@ -39,6 +42,7 @@ const chatSlice = createSlice({
     },
     setActiveConversation: (state, action) => {
       state.activeConversationId = action.payload;
+      if (action.payload) state.activeGroupId = null;
     },
     addMessage: (state, action) => {
       const { convId, message } = action.payload;
@@ -118,6 +122,60 @@ const chatSlice = createSlice({
         if (readAt !== undefined) msg.readAt = readAt;
       }
     },
+    setGroups: (state, action) => {
+      state.groupConversations = action.payload;
+    },
+    addGroupSystemMessage: (state, action) => {
+      const { groupId, content } = action.payload;
+      if (!groupId || !content) return;
+      if (!state.groupMessages[groupId]) state.groupMessages[groupId] = [];
+      const msg = {
+        messageId: "sys-" + Date.now(),
+        content,
+        type: "SYSTEM",
+        timestamp: Date.now(),
+      };
+      state.groupMessages[groupId].push(msg);
+      state.groupMessages[groupId].sort(
+        (a, b) => (a.timestamp || 0) - (b.timestamp || 0)
+      );
+    },
+
+    addOrUpdateGroup: (state, action) => {
+      const g = action.payload;
+      const id = g.id;
+      const idx = state.groupConversations.findIndex((x) => x.id === id);
+      if (idx >= 0)
+        state.groupConversations[idx] = {
+          ...state.groupConversations[idx],
+          ...g,
+        };
+      else state.groupConversations.unshift(g);
+    },
+    setActiveGroup: (state, action) => {
+      state.activeGroupId = action.payload;
+      if (action.payload) state.activeConversationId = null;
+    },
+    addGroupMessage: (state, action) => {
+      const { groupId, message } = action.payload;
+      if (!groupId) return;
+      if (!state.groupMessages[groupId]) state.groupMessages[groupId] = [];
+      // dedupe by messageId if present
+      const exists = state.groupMessages[groupId].some(
+        (m) =>
+          m.messageId && message.messageId && m.messageId === message.messageId
+      );
+      if (!exists) state.groupMessages[groupId].push(message);
+      state.groupMessages[groupId].sort(
+        (a, b) => (a.timestamp || 0) - (b.timestamp || 0)
+      );
+      // update group last message if exists in list
+      const gIdx = state.groupConversations.findIndex((g) => g.id === groupId);
+      if (gIdx >= 0) {
+        state.groupConversations[gIdx].lastMessage = message.content;
+        state.groupConversations[gIdx].lastAt = message.timestamp || Date.now();
+      }
+    },
     setLastSyncedAt: (state, action) => {
       state.lastSyncedAt = action.payload;
     },
@@ -127,6 +185,9 @@ const chatSlice = createSlice({
       state.activeConversationId = null;
       state.me = null;
       state.lastSyncedAt = 0;
+    },
+    clearGroupMessages: (state, action) => {
+      delete state.groupMessages[action.payload];
     },
   },
 });
@@ -138,8 +199,14 @@ export const {
   setActiveConversation,
   addMessage,
   updateMessageStatus,
+  setGroups,
+  addOrUpdateGroup,
+  setActiveGroup,
+  addGroupMessage,
+  addGroupSystemMessage,
   setLastSyncedAt,
   clearChatState,
+  clearGroupMessages,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;
