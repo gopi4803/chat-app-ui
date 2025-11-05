@@ -52,6 +52,7 @@ export function connectWebsocket(accessToken, handlers = {}) {
       client.subscribe("/topic/public", (msg) => safeHandle(msg, handlers.onMessagePublic));
       client.subscribe("/user/queue/messages", (msg) => safeHandle(msg, handlers.onMessagePrivate));
       client.subscribe("/topic/presence", (msg) => safeHandle(msg, handlers.onPresence));
+      client.subscribe("/user/queue/presence", (msg) => safeHandle(msg, handlers.onPresenceSnapshot));
       client.subscribe("/user/queue/typing", (msg) => safeHandle(msg, handlers.onTyping));
 
 

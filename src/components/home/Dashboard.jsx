@@ -233,14 +233,40 @@ const Dashboard = () => {
   // presence map in stateful ref
   const updatePresence = (payload) => {
     if (!payload) return;
+    const current = { ...presenceRef.current };
     if (Array.isArray(payload)) {
-      payload.forEach(
-        (p) => (presenceRef.current[p.email.toLowerCase()] = !!p.online)
-      );
-    } else if (payload.email) {
-      presenceRef.current[payload.email.toLowerCase()] = !!payload.online;
+      // handle both array of strings and array of objects safely
+      const snapshotMap = {};
+      payload.forEach((p) => {
+        if (!p) return;
+        // Case 1: p is a string
+        if (typeof p === "string") {
+          snapshotMap[p.toLowerCase()] = { online: true, lastSeen: null };
+        }
+        // Case 2: p is an object (from backend PresencePayload or REST snapshot)
+        else if (typeof p === "object") {
+          const email = p.email || p.user || p.id; // flexible
+          if (!email) return;
+          snapshotMap[email.toLowerCase()] = {
+            online: !!p.online,
+            lastSeen: p.lastSeen ?? null,
+          };
+        }
+      });
+
+      presenceRef.current = snapshotMap;
+      console.log(" Full presence snapshot:", snapshotMap);
+    } else if (payload.email || payload.user) {
+      // single incremental update (from WebSocket /topic/presence)
+      const email = (payload.email || payload.user || "").toLowerCase();
+      if (!email) return;
+      current[email] = {
+        online: !!payload.online,
+        lastSeen: payload.lastSeen ?? current[email]?.lastSeen ?? null,
+      };
+      presenceRef.current = current;
+      console.log("Presence update received:", payload);
     }
-    // force re-render by calling setAllUsers to reuse re-render
     setAllUsers((prev) => [...prev]);
   };
 
@@ -252,9 +278,19 @@ const Dashboard = () => {
       onConnect: () => {
         console.log(" WebSocket connected");
         flushPending();
-        const storedSince = Number(localStorage.getItem("lastSyncedAt") || 0);
-        syncMessages(storedSince);
+
+        setTimeout(async () => {
+          try {
+            const res = await api.get("/presence");
+            const payload = res.data.map((email) => ({ email, online: true }));
+            updatePresence(payload);
+            console.log(" REST presence snapshot applied:", payload);
+          } catch (e) {
+            console.warn("Presence REST fetch failed", e);
+          }
+        }, 700); // allow backend to populate sessions
       },
+
       onMessagePrivate: (payload) => {
         const msg = {
           type: payload.type,
@@ -295,6 +331,10 @@ const Dashboard = () => {
         }
       },
       onPresence: updatePresence,
+      onPresenceSnapshot: (payload) => {
+        // payload is an array of { email, online }
+        updatePresence(payload);
+      },
       onTyping: (payload) => {
         const from = payload.from?.toLowerCase();
         if (!from || from === meEmail.toLowerCase()) return;
@@ -483,6 +523,7 @@ const Dashboard = () => {
           messages={convMessages}
           onSend={handleSendMessage}
           isTyping={typingMap[activeConversation?.id]}
+          presenceRef={presenceRef}
         />
       </div>
     </div>

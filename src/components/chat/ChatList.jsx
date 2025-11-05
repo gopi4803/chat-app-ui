@@ -12,7 +12,11 @@ const Avatar = ({ name, online }) => {
       <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center text-gray-700 font-semibold">
         {initials}
       </div>
-      <div className={`absolute right-0 bottom-0 w-3 h-3 rounded-full border-2 border-white ${online ? "bg-green-400" : "bg-gray-400"}`} />
+      <div
+        className={`absolute right-0 bottom-0 w-3 h-3 rounded-full border-2 border-white ${
+          online ? "bg-green-400" : "bg-gray-400"
+        }`}
+      />
     </div>
   );
 };
@@ -27,7 +31,9 @@ const ChatList = ({ conversations = [], activeId, onSelect, presenceMap = {} }) 
           <div className="text-gray-400">No conversations yet</div>
         )}
         {conversations.map((c) => {
-          const online = presenceMap[c.id] || false;
+          const presence = presenceMap[c.id];
+          const online = presence?.online || false;
+
           return (
             <div
               key={c.id}
@@ -40,7 +46,9 @@ const ChatList = ({ conversations = [], activeId, onSelect, presenceMap = {} }) 
               <div className="flex-1">
                 <div className="flex items-center justify-between">
                   <div className="font-semibold text-gray-800">{c.name || c.id}</div>
-                  <div className="text-sm text-gray-400">{c.lastAt ? formatTime(c.lastAt) : ""}</div>
+                  <div className="text-sm text-gray-400">
+                    {c.lastAt ? formatTime(c.lastAt) : ""}
+                  </div>
                 </div>
                 <div className="text-sm text-gray-500 truncate">
                   {c.lastMessage || "Say hi!"}
@@ -59,7 +67,8 @@ function formatTime(ts) {
     const d = new Date(ts);
     const now = new Date();
     const sameDay = d.toDateString() === now.toDateString();
-    if (sameDay) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (sameDay)
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
     return d.toLocaleDateString();
