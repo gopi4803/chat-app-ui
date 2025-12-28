@@ -51,10 +51,11 @@ export function connectWebsocket(accessToken, handlers = {}) {
       // Subscribe channels
       client.subscribe("/topic/public", (msg) => safeHandle(msg, handlers.onMessagePublic));
       client.subscribe("/user/queue/messages", (msg) => safeHandle(msg, handlers.onMessagePrivate));
+      client.subscribe("/user/queue/group.messages", (msg) => safeHandle(msg, handlers.onGroupMessage)); // new
       client.subscribe("/topic/presence", (msg) => safeHandle(msg, handlers.onPresence));
       client.subscribe("/user/queue/presence", (msg) => safeHandle(msg, handlers.onPresenceSnapshot));
       client.subscribe("/user/queue/typing", (msg) => safeHandle(msg, handlers.onTyping));
-
+      client.subscribe("/user/queue/group.events", (msg) => safeHandle(msg, handlers.onGroupEvent));
 
       handlers.onConnect && handlers.onConnect(frame);
     },
@@ -79,8 +80,8 @@ export function connectWebsocket(accessToken, handlers = {}) {
   return client;
 }
 
-  // Safely parse JSON and dispatch
-  function safeHandle(msg, handler) {
+// Safely parse JSON and dispatch
+function safeHandle(msg, handler) {
   try {
     const payload = JSON.parse(msg.body);
     handler && handler(payload);
@@ -106,7 +107,7 @@ export function reconnectWebsocketIfTokenRotated() {
   const token = getAccessToken();
   if (!token) return;
   if (token !== currentToken) {
-    console.info("🔄 Token rotated, reconnecting WebSocket with new token...");
+    console.info(" Token rotated, reconnecting WebSocket with new token...");
     disconnectWebsocket();
     connectWebsocket(token, handlersRef);
   }
@@ -142,6 +143,95 @@ export function publish(destination, payload) {
     return true;
   } catch (e) {
     console.error("Failed to publish STOMP message to", destination, e);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to a group topic and group-typing topic.
+ * callback receives parsed payload for messages
+ */
+export function subscribeToGroup(groupId, handlers = {}) {
+  if (!client || !connected) {
+    console.warn("STOMP not connected - cannot subscribe to group", groupId);
+    return;
+  }
+  try {
+    const topic = `/topic/group.${groupId}`;
+    const typingTopic = `/topic/group.${groupId}.typing`;
+    const readTopic = `/topic/group.${groupId}.read`;
+    const deliveryTopic = `/topic/group.${groupId}.delivery`;
+
+    client.subscribe(topic, (msg) => safeHandle(msg, handlers.onMessage));
+    client.subscribe(typingTopic, (msg) => safeHandle(msg, handlers.onTyping));
+    client.subscribe(readTopic, (msg) => safeHandle(msg, handlers.onRead)); // new
+    client.subscribe(deliveryTopic, (msg) => safeHandle(msg, handlers.onDelivery)); // new
+
+    console.info("Subscribed to group", groupId);
+    return true;
+  } catch (e) {
+    console.error("Failed to subscribe to group topic", e);
+    return false;
+  }
+}
+
+export function unsubscribeFromGroup(groupId) {
+  console.info("unsubscribeFromGroup called for", groupId, "(noop)");
+  return true;
+}
+
+export function sendGroupMessage(payload) {
+  // payload should include: { groupId, content, messageId, type }
+  if (!client || !connected) {
+    console.warn("STOMP not connected - cannot send group message", payload);
+    return false;
+  }
+  try {
+    client.publish({
+      destination: "/app/group.send",
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch (e) {
+    console.error("Failed to publish group message", e);
+    return false;
+  }
+}
+
+export function publishGroupTyping(groupId) {
+  if (!client || !connected) {
+    return false;
+  }
+  try {
+    client.publish({
+      destination: "/app/group.typing",
+      body: JSON.stringify({ groupId }),
+    });
+    return true;
+  } catch (e) {
+    console.error("Failed to publish group.typing", e);
+    return false;
+  }
+}
+
+/**
+ * Notify server that user has read messages in a group.
+ * @param {number} groupId
+ * @param {string[]} messageIds
+ */
+export function publishGroupRead(groupId, messageIds = []) {
+  if (!client || !connected) {
+    console.warn("STOMP not connected - cannot publish group.read");
+    return false;
+  }
+  try {
+    client.publish({
+      destination: "/app/group.read",
+      body: JSON.stringify({ groupId, messageIds }),
+    });
+    return true;
+  } catch (e) {
+    console.error("Failed to publish group.read", e);
     return false;
   }
 }

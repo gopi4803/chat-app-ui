@@ -2,11 +2,16 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import ChatList from "../chat/ChatList";
 import ChatWindow from "../chat/ChatWindow";
+import GroupList from "../chat/GroupList";
+import CreateGroupModal from "../chat/CreateGroupModal";
 import {
   connectWebsocket,
   disconnectWebsocket,
   isWebsocketConnected,
   sendChatMessage,
+  subscribeToGroup,
+  sendGroupMessage,
+  publish,
 } from "../chat/websocketClient";
 import {
   setActiveConversation,
@@ -17,6 +22,14 @@ import {
   setConversations,
   clearChatState,
   updateMessageStatus,
+  setGroups,
+  addOrUpdateGroup,
+  addGroupSystemMessage,
+  addGroupMessage,
+  setActiveGroup,
+  clearGroupMessages,
+  updateGroupMessageRecipients,
+  updateGroupMessageDelivery,
 } from "../chat/chatSlice";
 import { logout as authLogout } from "../../components/redux/authSlice";
 import api, { getAccessToken } from "../uitility/api";
@@ -28,15 +41,18 @@ const Dashboard = () => {
   const conversations = useSelector((s) => s.chat.conversations);
   const activeId = useSelector((s) => s.chat.activeConversationId);
   const messages = useSelector((s) => s.chat.messages);
-  const lastSyncedAt = useSelector((s) => s.chat.lastSyncedAt);
+  const groupMessages = useSelector((s) => s.chat.groupMessages || {});
+  const groupsRedux = useSelector((s) => s.chat.groupConversations || []);
+  const activeGroupId = useSelector((s) => s.chat.activeGroupId);
 
   const [loading, setLoading] = useState(true);
   const [allUsers, setAllUsers] = useState([]);
   const [showUserList, setShowUserList] = useState(false);
   const [typingMap, setTypingMap] = useState({});
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
 
   const userMapRef = useRef({});
-  const presenceRef = useRef({}); // { email: true/false }
+  const presenceRef = useRef({});
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -53,17 +69,28 @@ const Dashboard = () => {
     }
   }, []);
 
+  const fetchGroups = useCallback(async () => {
+    try {
+      const res = await api.get("/groups");
+      const list = res.data || [];
+      dispatch(setGroups(list));
+      return list;
+    } catch (e) {
+      console.error("Failed to fetch groups", e);
+      return [];
+    }
+  }, [dispatch]);
+
+  // ---- Incremental sync for private messages
   const syncMessages = useCallback(
     async (since = 0) => {
       if (!meEmail) {
         console.warn("Skipping sync: meEmail not ready");
         return;
       }
-
       try {
         const res = await api.get(`/messages/sync?since=${since}`);
         const newMsgs = res.data || [];
-
         if (newMsgs.length) {
           let maxTs = since;
           for (const msg of newMsgs) {
@@ -82,7 +109,6 @@ const Dashboard = () => {
               })
             );
             if (msg.timestamp > maxTs) maxTs = msg.timestamp;
-            // If server returns messageId/delivered/readAt, update status too
             if (msg.messageId) {
               dispatch(
                 updateMessageStatus({
@@ -166,26 +192,18 @@ const Dashboard = () => {
     [dispatch, meEmail]
   );
 
+  // Init dashboard
   useEffect(() => {
     const initDashboard = async () => {
       const token = authToken || getAccessToken();
-      if (!token) {
-        console.warn("Waiting for token...");
-        return;
-      }
-      if (!meEmail) {
-        console.warn("Waiting for user email...");
-        return;
-      }
-
+      if (!token) return;
+      if (!meEmail) return;
       api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
       dispatch(setMe(meEmail.toLowerCase()));
-      fetchUsers().catch((e) => console.warn("fetchUsers failed", e));
+      await fetchUsers();
+      await fetchGroups();
       await bootstrapConversationsAndMessages(token);
       const storedSince = Number(localStorage.getItem("lastSyncedAt") || 0);
-      console.log(
-        `After bootstrap, running incremental sync since ${storedSince}`
-      );
       await syncMessages(storedSince);
     };
 
@@ -196,12 +214,12 @@ const Dashboard = () => {
     meEmail,
     dispatch,
     fetchUsers,
+    fetchGroups,
     bootstrapConversationsAndMessages,
     syncMessages,
   ]);
 
   const pendingQueueKey = "pending_chat_messages";
-
   const enqueuePending = (msg) => {
     try {
       const arr = JSON.parse(localStorage.getItem(pendingQueueKey) || "[]");
@@ -211,7 +229,6 @@ const Dashboard = () => {
       console.warn("Failed to enqueue pending message", e);
     }
   };
-
   const flushPending = async () => {
     try {
       const arr = JSON.parse(localStorage.getItem(pendingQueueKey) || "[]");
@@ -230,22 +247,17 @@ const Dashboard = () => {
     }
   };
 
-  // presence map in stateful ref
   const updatePresence = (payload) => {
     if (!payload) return;
     const current = { ...presenceRef.current };
     if (Array.isArray(payload)) {
-      // handle both array of strings and array of objects safely
       const snapshotMap = {};
       payload.forEach((p) => {
         if (!p) return;
-        // Case 1: p is a string
         if (typeof p === "string") {
           snapshotMap[p.toLowerCase()] = { online: true, lastSeen: null };
-        }
-        // Case 2: p is an object (from backend PresencePayload or REST snapshot)
-        else if (typeof p === "object") {
-          const email = p.email || p.user || p.id; // flexible
+        } else if (typeof p === "object") {
+          const email = p.email || p.user || p.id;
           if (!email) return;
           snapshotMap[email.toLowerCase()] = {
             online: !!p.online,
@@ -253,11 +265,8 @@ const Dashboard = () => {
           };
         }
       });
-
       presenceRef.current = snapshotMap;
-      console.log(" Full presence snapshot:", snapshotMap);
     } else if (payload.email || payload.user) {
-      // single incremental update (from WebSocket /topic/presence)
       const email = (payload.email || payload.user || "").toLowerCase();
       if (!email) return;
       current[email] = {
@@ -265,11 +274,11 @@ const Dashboard = () => {
         lastSeen: payload.lastSeen ?? current[email]?.lastSeen ?? null,
       };
       presenceRef.current = current;
-      console.log("Presence update received:", payload);
     }
     setAllUsers((prev) => [...prev]);
   };
 
+  // WebSocket handlers
   useEffect(() => {
     const token = authToken || getAccessToken();
     if (!token || !meEmail) return;
@@ -278,20 +287,98 @@ const Dashboard = () => {
       onConnect: () => {
         console.log(" WebSocket connected");
         flushPending();
-
+        // fetch presence
         setTimeout(async () => {
           try {
             const res = await api.get("/presence");
             const payload = res.data.map((email) => ({ email, online: true }));
             updatePresence(payload);
-            console.log(" REST presence snapshot applied:", payload);
           } catch (e) {
             console.warn("Presence REST fetch failed", e);
           }
-        }, 700); // allow backend to populate sessions
+        }, 700);
+        //subscribe to all groups the user is member of so topic broadcasts reach the client
+        (async () => {
+          try {
+            const res = await api.get("/groups");
+            const all = res.data || [];
+            // ensure redux has groups
+            dispatch(setGroups(all));
+            // subscribe to each group topic
+            for (const g of all) {
+              try {
+                subscribeToGroup(g.id, {
+                  onMessage: (payload) => {
+                    dispatch(
+                      addGroupMessage({
+                        groupId: g.id,
+                        message: {
+                          messageId: payload.messageId,
+                          content: payload.content,
+                          sender: (
+                            payload.sender || payload.senderEmail
+                          )?.toLowerCase(),
+                          senderName: payload.senderName || payload.sender,
+                          timestamp: payload.timestamp,
+                          delivered: payload.delivered,
+                          type: payload.type,
+                          deliveredRecipients:
+                            payload.deliveredRecipients || [],
+                          readRecipients: payload.readRecipients || [],
+                        },
+                      })
+                    );
+
+                    // DELIVERY ACK FOR TOPIC MESSAGE
+                    if (
+                      payload.sender?.toLowerCase() !== meEmail.toLowerCase() &&
+                      payload.messageId
+                    ) {
+                      publish("/app/group.delivered", {
+                        groupId: g.id,
+                        messageId: payload.messageId,
+                      });
+                    }
+                  },
+
+                  onTyping: () => {},
+
+                  onRead: (payload) => {
+                    dispatch(
+                      updateGroupMessageRecipients({
+                        groupId: payload.groupId,
+                        messageId: payload.messageId,
+                        readRecipients: payload.readRecipients || [],
+                      })
+                    );
+                  },
+
+                  onDelivery: (payload) => {
+                    dispatch(
+                      updateGroupMessageDelivery({
+                        groupId: payload.groupId,
+                        messageId: payload.messageId,
+                        deliveredRecipients: payload.deliveredRecipients || [],
+                      })
+                    );
+                  },
+                });
+              } catch (err) {
+                console.warn("subscribeToGroup failed for", g.id, err);
+              }
+            }
+          } catch (e) {
+            console.warn("Failed to fetch groups during onConnect", e);
+          }
+        })();
       },
 
       onMessagePrivate: (payload) => {
+        if (!payload) return;
+
+        const me = meEmail?.toLowerCase();
+        if (!me) return;
+
         const msg = {
           type: payload.type,
           content: payload.content,
@@ -299,13 +386,18 @@ const Dashboard = () => {
           to: payload.to?.toLowerCase(),
           timestamp: payload.timestamp || Date.now(),
           messageId: payload.messageId,
-          delivered: payload.delivered,
-          readAt: payload.readAt,
+          delivered: payload.delivered ?? false,
+          readAt: payload.readAt ?? null,
         };
 
-        const other = msg.from === meEmail.toLowerCase() ? msg.to : msg.from;
+        // Determine the other participant
+        const other = msg.from === me ? msg.to : msg.from;
+
+        if (!other) return;
+
         const convName = userMapRef.current[other] || other;
 
+        //Update conversation list (sidebar)
         dispatch(
           addOrUpdateConversation({
             id: other,
@@ -316,9 +408,10 @@ const Dashboard = () => {
           })
         );
 
+        //Add message to chat state
         dispatch(addMessage({ convId: other, message: msg }));
 
-        // if payload includes messageId and delivered/read flags, update status
+        //Merge delivery/read updates if server sent them
         if (msg.messageId) {
           dispatch(
             updateMessageStatus({
@@ -329,18 +422,59 @@ const Dashboard = () => {
             })
           );
         }
+
+        //DELIVERY ACK
+        // Only ACK if:
+        // - message is from the OTHER user
+        // - message has an ID
+        if (msg.from !== me && msg.messageId) {
+          try {
+            publish("/app/chat.delivered", {
+              messageId: msg.messageId,
+            });
+          } catch (e) {
+            console.warn("Failed to send delivery ACK for", msg.messageId, e);
+          }
+        }
       },
+
+      // onGroupMessage: per-user queue messages (delivered immediately to user)
+      onGroupMessage: (payload) => {
+        const groupId = payload.groupId;
+        const message = {
+          messageId: payload.messageId,
+          content: payload.content,
+          sender: (
+            payload.sender ||
+            payload.senderEmail ||
+            payload.senderName
+          )?.toLowerCase(),
+          senderName: payload.senderName || payload.displayName,
+          timestamp: payload.timestamp,
+          delivered: !!payload.delivered,
+          type: payload.type,
+          deliveredRecipients: payload.deliveredRecipients || [],
+          readRecipients: payload.readRecipients || [],
+        };
+        dispatch(addGroupMessage({ groupId, message }));
+
+        // Immediately ack delivery back to server so sender sees delivered tick
+        try {
+          publish("/app/group.delivered", {
+            groupId,
+            messageId: payload.messageId,
+          });
+        } catch (e) {
+          console.warn("Failed to publish group.delivered ack", e);
+        }
+      },
+
       onPresence: updatePresence,
-      onPresenceSnapshot: (payload) => {
-        // payload is an array of { email, online }
-        updatePresence(payload);
-      },
+      onPresenceSnapshot: updatePresence,
       onTyping: (payload) => {
         const from = payload.from?.toLowerCase();
         if (!from || from === meEmail.toLowerCase()) return;
         setTypingMap((prev) => ({ ...prev, [from]: true }));
-
-        // Remove typing indicator after 3s
         setTimeout(() => {
           setTypingMap((prev) => {
             const updated = { ...prev };
@@ -349,25 +483,123 @@ const Dashboard = () => {
           });
         }, 3000);
       },
+
+      onGroupEvent: (event) => {
+        if (event.type === "GROUP_CREATED") {
+          const groupId = event.groupId;
+          const groupName = event.name;
+          const members = event.members || [];
+          const createdBy = event.createdBy;
+          const avatar = event.avatar || null;
+
+          const normalizedMembers = members.map((m) =>
+            typeof m === "string" ? { email: m, role: "MEMBER" } : m
+          );
+
+          dispatch(
+            addOrUpdateGroup({
+              id: groupId,
+              name: groupName,
+              avatar,
+              createdBy,
+              members: normalizedMembers,
+            })
+          );
+
+          // subscribe to the new group
+          subscribeToGroup(groupId, {
+            onMessage: (payload) => {
+              dispatch(
+                addGroupMessage({
+                  groupId,
+                  message: {
+                    messageId: payload.messageId,
+                    content: payload.content,
+                    sender: (
+                      payload.sender || payload.senderEmail
+                    )?.toLowerCase(),
+                    senderName: payload.senderName || payload.sender,
+                    timestamp: payload.timestamp,
+                    delivered: payload.delivered,
+                    type: payload.type,
+                    deliveredRecipients: payload.deliveredRecipients || [],
+                    readRecipients: payload.readRecipients || [],
+                  },
+                })
+              );
+
+              //DELIVERY ACK
+              if (
+                payload.sender?.toLowerCase() !== meEmail.toLowerCase() &&
+                payload.messageId
+              ) {
+                publish("/app/group.delivered", {
+                  groupId,
+                  messageId: payload.messageId,
+                });
+              }
+            },
+
+            onTyping: () => {},
+
+            onRead: (payload) => {
+              dispatch(
+                updateGroupMessageRecipients({
+                  groupId: payload.groupId,
+                  messageId: payload.messageId,
+                  readRecipients: payload.readRecipients || [],
+                })
+              );
+            },
+
+            onDelivery: (payload) => {
+              dispatch(
+                updateGroupMessageDelivery({
+                  groupId: payload.groupId,
+                  messageId: payload.messageId,
+                  deliveredRecipients: payload.deliveredRecipients || [],
+                })
+              );
+            },
+          });
+        }
+
+        if (event.type === "GROUP_SYSTEM") {
+          dispatch(
+            addGroupSystemMessage({
+              groupId: event.groupId,
+              content: event.content,
+            })
+          );
+        }
+      },
+
+      onRead: (payload) => {
+        dispatch(
+          updateGroupMessageRecipients({
+            groupId: payload.groupId,
+            messageId: payload.messageId,
+            readRecipients: payload.readRecipients || [],
+          })
+        );
+      },
+
+      onDelivery: (payload) => {
+        dispatch(
+          updateGroupMessageDelivery({
+            groupId: payload.groupId,
+            messageId: payload.messageId,
+            deliveredRecipients: payload.deliveredRecipients || [],
+          })
+        );
+      },
     };
 
     connectWebsocket(token, handlers);
     return () => disconnectWebsocket();
   }, [authToken, meEmail, dispatch, syncMessages]);
 
-  const handleStartChat = (user) => {
-    const convId = user.email.toLowerCase();
-    dispatch(
-      addOrUpdateConversation({
-        id: convId,
-        name: user.username || user.email,
-        participants: [user.email],
-      })
-    );
-    dispatch(setActiveConversation(convId));
-    setShowUserList(false);
-  };
-
+  // Send private message
   const handleSendMessage = async (toRaw, content, messageId) => {
     if (!toRaw || !content) return;
     const to = toRaw.toLowerCase();
@@ -405,6 +637,136 @@ const Dashboard = () => {
     }
   };
 
+  // Send group message
+  const handleSendGroupMessage = (groupId, content, messageId) => {
+    if (!groupId || !content) return;
+    const ts = Date.now();
+    const payload = {
+      groupId,
+      content,
+      messageId,
+      timestamp: ts,
+      type: "CHAT",
+    };
+
+    dispatch(
+      addGroupMessage({
+        groupId,
+        message: {
+          messageId,
+          content,
+          sender: meEmail.toLowerCase(),
+          timestamp: ts,
+          delivered: false,
+        },
+      })
+    );
+
+    const ok = sendGroupMessage(payload);
+    if (!ok) console.warn("Failed to send group message");
+  };
+
+  // User starts 1:1 chat
+  const handleStartChat = (user) => {
+    const convId = user.email.toLowerCase();
+    dispatch(
+      addOrUpdateConversation({
+        id: convId,
+        name: user.username || user.email,
+        participants: [user.email],
+      })
+    );
+    dispatch(setActiveConversation(convId));
+    setShowUserList(false);
+  };
+
+  //  Select a group: load history & subscribe
+  const handleSelectGroup = async (group) => {
+    if (!group) return;
+    dispatch(setActiveGroup(group.id));
+    dispatch(setActiveConversation(null));
+    try {
+      const res = await api.get(`/groups/${group.id}/messages`);
+      const history = res.data || [];
+      dispatch(clearGroupMessages(group.id));
+      for (const msg of history) {
+        dispatch(
+          addGroupMessage({
+            groupId: group.id,
+            message: {
+              messageId: msg.messageId,
+              content: msg.content,
+              sender: msg.sender,
+              senderName: msg.senderName,
+              timestamp: msg.timestamp,
+              delivered: msg.delivered,
+              type: msg.type,
+              deliveredRecipients: msg.deliveredRecipients || [],
+              readRecipients: msg.readRecipients || [],
+            },
+          })
+        );
+      }
+
+      // ensure we subscribe to the group topic (idempotent)
+      subscribeToGroup(group.id, {
+        onMessage: (payload) => {
+          dispatch(
+            addGroupMessage({
+              groupId: group.id,
+              message: {
+                messageId: payload.messageId,
+                content: payload.content,
+                sender: (payload.sender || payload.senderEmail)?.toLowerCase(),
+                senderName: payload.senderName || payload.sender,
+                timestamp: payload.timestamp,
+                delivered: payload.delivered,
+                type: payload.type,
+                deliveredRecipients: payload.deliveredRecipients || [],
+                readRecipients: payload.readRecipients || [],
+              },
+            })
+          );
+
+          //DELIVERY ACK
+          if (
+            payload.sender?.toLowerCase() !== meEmail.toLowerCase() &&
+            payload.messageId
+          ) {
+            publish("/app/group.delivered", {
+              groupId: group.id,
+              messageId: payload.messageId,
+            });
+          }
+        },
+
+        onTyping: () => {},
+
+        onRead: (payload) => {
+          dispatch(
+            updateGroupMessageRecipients({
+              groupId: payload.groupId,
+              messageId: payload.messageId,
+              readRecipients: payload.readRecipients || [],
+            })
+          );
+        },
+
+        onDelivery: (payload) => {
+          dispatch(
+            updateGroupMessageDelivery({
+              groupId: payload.groupId,
+              messageId: payload.messageId,
+              deliveredRecipients: payload.deliveredRecipients || [],
+            })
+          );
+        },
+      });
+    } catch (e) {
+      console.error("Failed to load group messages", e);
+    }
+  };
+
   const handleLogout = () => {
     dispatch(authLogout());
     dispatch(clearChatState());
@@ -421,22 +783,33 @@ const Dashboard = () => {
     );
 
   const activeConversation = conversations.find((c) => c.id === activeId);
+  const activeGroup = groupsRedux.find((g) => g.id === activeGroupId);
   const convMessages = messages[activeId] || [];
+  const groupMsgs = groupMessages[activeGroupId] || [];
 
   return (
     <div className="flex h-screen bg-gray-100">
+      {/* LEFT SIDEBAR */}
       <div className="relative w-1/3 bg-white rounded-l-2xl shadow-lg overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-6 pt-6">
           <div className="text-2xl font-bold text-black">Chat App</div>
-          <button
-            onClick={async () => {
-              await fetchUsers();
-              setShowUserList(true);
-            }}
-            className="bg-gray-900 text-white px-3 py-1 rounded-lg hover:opacity-80 transition"
-          >
-            + New Chat
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                await fetchUsers();
+                setShowUserList(true);
+              }}
+              className="bg-gray-900 text-white px-3 py-1 rounded-lg hover:opacity-80 transition"
+            >
+              + New Chat
+            </button>
+            <button
+              onClick={() => setShowCreateGroup(true)}
+              className="bg-blue-600 text-white px-3 py-1 rounded-lg hover:opacity-80 transition"
+            >
+              + Group
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -446,6 +819,7 @@ const Dashboard = () => {
             presenceMap={presenceRef.current}
             onSelect={async (id) => {
               dispatch(setActiveConversation(id));
+              dispatch(setActiveGroup(null));
               if (!messages[id] || messages[id].length === 0) {
                 try {
                   const res = await api.get(`/messages/${id}`);
@@ -470,6 +844,13 @@ const Dashboard = () => {
               }
             }}
           />
+          <div className="border-t mt-2">
+            <GroupList
+              groups={groupsRedux}
+              activeGroupId={activeGroupId}
+              onSelect={handleSelectGroup}
+            />
+          </div>
         </div>
 
         <div className="p-4 border-t border-gray-200">
@@ -514,17 +895,49 @@ const Dashboard = () => {
             </div>
           </div>
         )}
+
+        {showCreateGroup && (
+          <CreateGroupModal
+            visible={showCreateGroup}
+            onClose={() => setShowCreateGroup(false)}
+            onCreated={async (created) => {
+              await fetchGroups();
+            }}
+            allUsers={allUsers}
+            meEmail={meEmail}
+          />
+        )}
       </div>
 
+      {/* RIGHT: Chat Window */}
       <div className="flex-1 bg-gray-900 text-white rounded-r-2xl">
-        <ChatWindow
-          conversation={activeConversation}
-          me={meEmail}
-          messages={convMessages}
-          onSend={handleSendMessage}
-          isTyping={typingMap[activeConversation?.id]}
-          presenceRef={presenceRef}
-        />
+        {activeGroup ? (
+          <ChatWindow
+            conversation={{
+              id: activeGroup.id,
+              name: activeGroup.name,
+              participants: activeGroup.members?.map((m) => m.email) || [],
+              members: activeGroup.members || [],
+              isGroup: true,
+            }}
+            me={meEmail}
+            messages={groupMsgs}
+            onSend={(convId, text, messageId) =>
+              handleSendGroupMessage(convId, text, messageId)
+            }
+            isTyping={false}
+            presenceRef={presenceRef}
+          />
+        ) : (
+          <ChatWindow
+            conversation={activeConversation}
+            me={meEmail}
+            messages={convMessages}
+            onSend={handleSendMessage}
+            isTyping={typingMap[activeConversation?.id]}
+            presenceRef={presenceRef}
+          />
+        )}
       </div>
     </div>
   );
