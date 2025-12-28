@@ -51,6 +51,7 @@ export function connectWebsocket(accessToken, handlers = {}) {
       // Subscribe channels
       client.subscribe("/topic/public", (msg) => safeHandle(msg, handlers.onMessagePublic));
       client.subscribe("/user/queue/messages", (msg) => safeHandle(msg, handlers.onMessagePrivate));
+      client.subscribe("/user/queue/group.messages", (msg) => safeHandle(msg, handlers.onGroupMessage)); // new
       client.subscribe("/topic/presence", (msg) => safeHandle(msg, handlers.onPresence));
       client.subscribe("/user/queue/presence", (msg) => safeHandle(msg, handlers.onPresenceSnapshot));
       client.subscribe("/user/queue/typing", (msg) => safeHandle(msg, handlers.onTyping));
@@ -79,8 +80,8 @@ export function connectWebsocket(accessToken, handlers = {}) {
   return client;
 }
 
-  // Safely parse JSON and dispatch
-  function safeHandle(msg, handler) {
+// Safely parse JSON and dispatch
+function safeHandle(msg, handler) {
   try {
     const payload = JSON.parse(msg.body);
     handler && handler(payload);
@@ -158,9 +159,13 @@ export function subscribeToGroup(groupId, handlers = {}) {
   try {
     const topic = `/topic/group.${groupId}`;
     const typingTopic = `/topic/group.${groupId}.typing`;
+    const readTopic = `/topic/group.${groupId}.read`;
+    const deliveryTopic = `/topic/group.${groupId}.delivery`;
 
     client.subscribe(topic, (msg) => safeHandle(msg, handlers.onMessage));
     client.subscribe(typingTopic, (msg) => safeHandle(msg, handlers.onTyping));
+    client.subscribe(readTopic, (msg) => safeHandle(msg, handlers.onRead)); // new
+    client.subscribe(deliveryTopic, (msg) => safeHandle(msg, handlers.onDelivery)); // new
 
     console.info("Subscribed to group", groupId);
     return true;
@@ -170,10 +175,7 @@ export function subscribeToGroup(groupId, handlers = {}) {
   }
 }
 
-
 export function unsubscribeFromGroup(groupId) {
-  // STOMP.js stores subscriptions internally; since we didn't keep subscription references,
-  // re-creating a reconnect will clear them. For now, no-op but left for future improvements.
   console.info("unsubscribeFromGroup called for", groupId, "(noop)");
   return true;
 }
@@ -207,7 +209,29 @@ export function publishGroupTyping(groupId) {
     });
     return true;
   } catch (e) {
-    console.error("Failed to publish group typing", e);
+    console.error("Failed to publish group.typing", e);
+    return false;
+  }
+}
+
+/**
+ * Notify server that user has read messages in a group.
+ * @param {number} groupId
+ * @param {string[]} messageIds
+ */
+export function publishGroupRead(groupId, messageIds = []) {
+  if (!client || !connected) {
+    console.warn("STOMP not connected - cannot publish group.read");
+    return false;
+  }
+  try {
+    client.publish({
+      destination: "/app/group.read",
+      body: JSON.stringify({ groupId, messageIds }),
+    });
+    return true;
+  } catch (e) {
+    console.error("Failed to publish group.read", e);
     return false;
   }
 }

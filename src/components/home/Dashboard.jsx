@@ -11,6 +11,7 @@ import {
   sendChatMessage,
   subscribeToGroup,
   sendGroupMessage,
+  publish,
 } from "../chat/websocketClient";
 import {
   setActiveConversation,
@@ -27,6 +28,8 @@ import {
   addGroupMessage,
   setActiveGroup,
   clearGroupMessages,
+  updateGroupMessageRecipients,
+  updateGroupMessageDelivery,
 } from "../chat/chatSlice";
 import { logout as authLogout } from "../../components/redux/authSlice";
 import api, { getAccessToken } from "../uitility/api";
@@ -41,7 +44,6 @@ const Dashboard = () => {
   const groupMessages = useSelector((s) => s.chat.groupMessages || {});
   const groupsRedux = useSelector((s) => s.chat.groupConversations || []);
   const activeGroupId = useSelector((s) => s.chat.activeGroupId);
-  // const lastSyncedAt = useSelector((s) => s.chat.lastSyncedAt);
 
   const [loading, setLoading] = useState(true);
   const [allUsers, setAllUsers] = useState([]);
@@ -72,8 +74,10 @@ const Dashboard = () => {
       const res = await api.get("/groups");
       const list = res.data || [];
       dispatch(setGroups(list));
+      return list;
     } catch (e) {
       console.error("Failed to fetch groups", e);
+      return [];
     }
   }, [dispatch]);
 
@@ -283,6 +287,7 @@ const Dashboard = () => {
       onConnect: () => {
         console.log(" WebSocket connected");
         flushPending();
+        // fetch presence
         setTimeout(async () => {
           try {
             const res = await api.get("/presence");
@@ -292,9 +297,88 @@ const Dashboard = () => {
             console.warn("Presence REST fetch failed", e);
           }
         }, 700);
+        //subscribe to all groups the user is member of so topic broadcasts reach the client
+        (async () => {
+          try {
+            const res = await api.get("/groups");
+            const all = res.data || [];
+            // ensure redux has groups
+            dispatch(setGroups(all));
+            // subscribe to each group topic
+            for (const g of all) {
+              try {
+                subscribeToGroup(g.id, {
+                  onMessage: (payload) => {
+                    dispatch(
+                      addGroupMessage({
+                        groupId: g.id,
+                        message: {
+                          messageId: payload.messageId,
+                          content: payload.content,
+                          sender: (
+                            payload.sender || payload.senderEmail
+                          )?.toLowerCase(),
+                          senderName: payload.senderName || payload.sender,
+                          timestamp: payload.timestamp,
+                          delivered: payload.delivered,
+                          type: payload.type,
+                          deliveredRecipients:
+                            payload.deliveredRecipients || [],
+                          readRecipients: payload.readRecipients || [],
+                        },
+                      })
+                    );
+
+                    // DELIVERY ACK FOR TOPIC MESSAGE
+                    if (
+                      payload.sender?.toLowerCase() !== meEmail.toLowerCase() &&
+                      payload.messageId
+                    ) {
+                      publish("/app/group.delivered", {
+                        groupId: g.id,
+                        messageId: payload.messageId,
+                      });
+                    }
+                  },
+
+                  onTyping: () => {},
+
+                  onRead: (payload) => {
+                    dispatch(
+                      updateGroupMessageRecipients({
+                        groupId: payload.groupId,
+                        messageId: payload.messageId,
+                        readRecipients: payload.readRecipients || [],
+                      })
+                    );
+                  },
+
+                  onDelivery: (payload) => {
+                    dispatch(
+                      updateGroupMessageDelivery({
+                        groupId: payload.groupId,
+                        messageId: payload.messageId,
+                        deliveredRecipients: payload.deliveredRecipients || [],
+                      })
+                    );
+                  },
+                });
+              } catch (err) {
+                console.warn("subscribeToGroup failed for", g.id, err);
+              }
+            }
+          } catch (e) {
+            console.warn("Failed to fetch groups during onConnect", e);
+          }
+        })();
       },
 
       onMessagePrivate: (payload) => {
+        if (!payload) return;
+
+        const me = meEmail?.toLowerCase();
+        if (!me) return;
+
         const msg = {
           type: payload.type,
           content: payload.content,
@@ -302,13 +386,18 @@ const Dashboard = () => {
           to: payload.to?.toLowerCase(),
           timestamp: payload.timestamp || Date.now(),
           messageId: payload.messageId,
-          delivered: payload.delivered,
-          readAt: payload.readAt,
+          delivered: payload.delivered ?? false,
+          readAt: payload.readAt ?? null,
         };
 
-        const other = msg.from === meEmail.toLowerCase() ? msg.to : msg.from;
+        // Determine the other participant
+        const other = msg.from === me ? msg.to : msg.from;
+
+        if (!other) return;
+
         const convName = userMapRef.current[other] || other;
 
+        //Update conversation list (sidebar)
         dispatch(
           addOrUpdateConversation({
             id: other,
@@ -319,8 +408,10 @@ const Dashboard = () => {
           })
         );
 
+        //Add message to chat state
         dispatch(addMessage({ convId: other, message: msg }));
 
+        //Merge delivery/read updates if server sent them
         if (msg.messageId) {
           dispatch(
             updateMessageStatus({
@@ -331,7 +422,53 @@ const Dashboard = () => {
             })
           );
         }
+
+        //DELIVERY ACK
+        // Only ACK if:
+        // - message is from the OTHER user
+        // - message has an ID
+        if (msg.from !== me && msg.messageId) {
+          try {
+            publish("/app/chat.delivered", {
+              messageId: msg.messageId,
+            });
+          } catch (e) {
+            console.warn("Failed to send delivery ACK for", msg.messageId, e);
+          }
+        }
       },
+
+      // onGroupMessage: per-user queue messages (delivered immediately to user)
+      onGroupMessage: (payload) => {
+        const groupId = payload.groupId;
+        const message = {
+          messageId: payload.messageId,
+          content: payload.content,
+          sender: (
+            payload.sender ||
+            payload.senderEmail ||
+            payload.senderName
+          )?.toLowerCase(),
+          senderName: payload.senderName || payload.displayName,
+          timestamp: payload.timestamp,
+          delivered: !!payload.delivered,
+          type: payload.type,
+          deliveredRecipients: payload.deliveredRecipients || [],
+          readRecipients: payload.readRecipients || [],
+        };
+        dispatch(addGroupMessage({ groupId, message }));
+
+        // Immediately ack delivery back to server so sender sees delivered tick
+        try {
+          publish("/app/group.delivered", {
+            groupId,
+            messageId: payload.messageId,
+          });
+        } catch (e) {
+          console.warn("Failed to publish group.delivered ack", e);
+        }
+      },
+
       onPresence: updatePresence,
       onPresenceSnapshot: updatePresence,
       onTyping: (payload) => {
@@ -346,6 +483,7 @@ const Dashboard = () => {
           });
         }, 3000);
       },
+
       onGroupEvent: (event) => {
         if (event.type === "GROUP_CREATED") {
           const groupId = event.groupId;
@@ -368,12 +506,58 @@ const Dashboard = () => {
             })
           );
 
+          // subscribe to the new group
           subscribeToGroup(groupId, {
             onMessage: (payload) => {
               dispatch(
                 addGroupMessage({
                   groupId,
-                  message: payload,
+                  message: {
+                    messageId: payload.messageId,
+                    content: payload.content,
+                    sender: (
+                      payload.sender || payload.senderEmail
+                    )?.toLowerCase(),
+                    senderName: payload.senderName || payload.sender,
+                    timestamp: payload.timestamp,
+                    delivered: payload.delivered,
+                    type: payload.type,
+                    deliveredRecipients: payload.deliveredRecipients || [],
+                    readRecipients: payload.readRecipients || [],
+                  },
+                })
+              );
+
+              //DELIVERY ACK
+              if (
+                payload.sender?.toLowerCase() !== meEmail.toLowerCase() &&
+                payload.messageId
+              ) {
+                publish("/app/group.delivered", {
+                  groupId,
+                  messageId: payload.messageId,
+                });
+              }
+            },
+
+            onTyping: () => {},
+
+            onRead: (payload) => {
+              dispatch(
+                updateGroupMessageRecipients({
+                  groupId: payload.groupId,
+                  messageId: payload.messageId,
+                  readRecipients: payload.readRecipients || [],
+                })
+              );
+            },
+
+            onDelivery: (payload) => {
+              dispatch(
+                updateGroupMessageDelivery({
+                  groupId: payload.groupId,
+                  messageId: payload.messageId,
+                  deliveredRecipients: payload.deliveredRecipients || [],
                 })
               );
             },
@@ -388,6 +572,26 @@ const Dashboard = () => {
             })
           );
         }
+      },
+
+      onRead: (payload) => {
+        dispatch(
+          updateGroupMessageRecipients({
+            groupId: payload.groupId,
+            messageId: payload.messageId,
+            readRecipients: payload.readRecipients || [],
+          })
+        );
+      },
+
+      onDelivery: (payload) => {
+        dispatch(
+          updateGroupMessageDelivery({
+            groupId: payload.groupId,
+            messageId: payload.messageId,
+            deliveredRecipients: payload.deliveredRecipients || [],
+          })
+        );
       },
     };
 
@@ -492,16 +696,19 @@ const Dashboard = () => {
             message: {
               messageId: msg.messageId,
               content: msg.content,
-              sender: msg.sender,       
+              sender: msg.sender,
               senderName: msg.senderName,
               timestamp: msg.timestamp,
               delivered: msg.delivered,
               type: msg.type,
+              deliveredRecipients: msg.deliveredRecipients || [],
+              readRecipients: msg.readRecipients || [],
             },
           })
         );
       }
 
+      // ensure we subscribe to the group topic (idempotent)
       subscribeToGroup(group.id, {
         onMessage: (payload) => {
           dispatch(
@@ -510,18 +717,49 @@ const Dashboard = () => {
               message: {
                 messageId: payload.messageId,
                 content: payload.content,
-                sender: payload.senderEmail || payload.sender, // keep as email (logic)
-                senderName: payload.senderName || payload.sender, 
+                sender: (payload.sender || payload.senderEmail)?.toLowerCase(),
+                senderName: payload.senderName || payload.sender,
                 timestamp: payload.timestamp,
                 delivered: payload.delivered,
                 type: payload.type,
+                deliveredRecipients: payload.deliveredRecipients || [],
+                readRecipients: payload.readRecipients || [],
               },
             })
           );
+
+          //DELIVERY ACK
+          if (
+            payload.sender?.toLowerCase() !== meEmail.toLowerCase() &&
+            payload.messageId
+          ) {
+            publish("/app/group.delivered", {
+              groupId: group.id,
+              messageId: payload.messageId,
+            });
+          }
         },
-        onTyping: (payload) => {
-          
-          // console.log("Group typing:", payload);
+
+        onTyping: () => {},
+
+        onRead: (payload) => {
+          dispatch(
+            updateGroupMessageRecipients({
+              groupId: payload.groupId,
+              messageId: payload.messageId,
+              readRecipients: payload.readRecipients || [],
+            })
+          );
+        },
+
+        onDelivery: (payload) => {
+          dispatch(
+            updateGroupMessageDelivery({
+              groupId: payload.groupId,
+              messageId: payload.messageId,
+              deliveredRecipients: payload.deliveredRecipients || [],
+            })
+          );
         },
       });
     } catch (e) {
