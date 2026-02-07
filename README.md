@@ -1,18 +1,39 @@
-# React + Vite
+# Real-Time Chat Application – Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the frontend for a real-time chat application built using React.  
+It communicates with a Spring Boot backend via REST APIs for authentication and WebSockets (STOMP) for real-time messaging.
 
-Currently, two official plugins are available:
+## Tech Stack
+- React
+- Redux (global state management)
+- Tailwind CSS
+- STOMP over WebSockets
+- JWT-based authentication
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Features
+- User authentication using JWT (access + refresh tokens)
+- Google OAuth login support
+- One-to-one real-time messaging
+- Group chat with per-user delivery and read receipts
+- Typing indicators and online/offline presence
+- Offline message delivery (handled by backend)
+- Secure WebSocket connection using JWT
+- Global state management for messages, users, and presence
 
-## React Compiler
+## Architecture Overview
+- REST APIs are used for authentication, user management, and initial data loading
+- WebSockets are used for real-time messaging and presence updates
+- The frontend does not trust client-side message state; it reflects server-authoritative state
+- Messages are optimistically rendered but reconciled using server echoes and acknowledgements
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+## Authentication Flow
+- Access token is stored client-side and sent with REST requests
+- Refresh token is stored securely as an HttpOnly cookie
+- When access token expires, a new one is obtained using the refresh token
+- WebSocket connection is authenticated during connection handshake using the access token
 
-Note: This will impact Vite dev & build performances.
+## Project Status
+Core functionality is complete and stable.  
+Further enhancements such as full responsiveness, accessibility improvements, and UI polish are planned as future work.
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+This project is primarily used to demonstrate real-world system design concepts such as real-time communication, eventual consistency, and server-authoritative state.
